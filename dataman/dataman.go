@@ -40,6 +40,12 @@ type SimpleDataManager struct{
 	f file.File
 	a *file.Allocator
 }
+func NewSimpleDataManager(f file.File) (*SimpleDataManager,error) {
+	a,e := file.NewAllocator(f)
+	if e!=nil { return nil,e }
+	return &SimpleDataManager{f,a},nil
+}
+
 func (s *SimpleDataManager) Close() error { return s.a.Close() }
 func (s *SimpleDataManager) DirectFile() file.File { return s.f }
 func (s *SimpleDataManager) RollbackFile() file.File { return s.f }
