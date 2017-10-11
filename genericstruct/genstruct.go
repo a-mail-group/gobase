@@ -27,6 +27,9 @@ import "github.com/maxymania/gobase/dataman"
 import "github.com/hashicorp/golang-lru/simplelru"
 import "github.com/valyala/bytebufferpool"
 import "github.com/cznic/file"
+import "errors"
+
+var ErrReadOnly = errors.New("ReadOnly")
 
 func expand(i []byte,n int) []byte {
 	if cap(i)<n { return make([]byte,n) }
@@ -106,4 +109,16 @@ func (c *NodeCache) GetFromCache(off int64) (Block,bool) {
 	if ok { return b.(Block),true }
 	return nil,false
 }
+func (c *NodeCache) Set(b Block) (int64,error) {
+	if c.rdonly { return 0,ErrReadOnly } // Do nothing
+	buf := c.master.pool.Get()
+	defer c.master.pool.Put(buf)
+	b.Store(buf)
+	off,err := c.dman.Alloc(int64(len(buf.B)))
+	if err!=nil { return 0,err }
+	_,err = c.file().WriteAt(buf.B,off)
+	return off,err
+}
+
+
 
