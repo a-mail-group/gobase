@@ -68,6 +68,7 @@ func (m *NodeMaster) Open(dman dataman.DataManager, rdonly bool) *NodeCache {
 }
 func (c *NodeCache) evict(key interface{}, value interface{}) {
 	if c.rdonly { return } // Do nothing
+	if !(value.(Block).Dirty()) { return } // Don't store
 	buf := c.master.pool.Get()
 	defer c.master.pool.Put(buf)
 	off := key.(int64)
@@ -119,6 +120,9 @@ func (c *NodeCache) Set(b Block) (int64,error) {
 	_,err = c.file().WriteAt(buf.B,off)
 	return off,err
 }
-
+func (c *NodeCache) Close() error {
+	c.cache.Purge()
+	return nil
+}
 
 

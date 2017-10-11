@@ -23,115 +23,94 @@ SOFTWARE.
 
 package skiplist
 
-import "github.com/maxymania/gobase/dataman"
 import "encoding/binary"
-import "github.com/maxymania/gobase/buffer"
+import "bytes"
+import "github.com/valyala/bytebufferpool"
+import "github.com/maxymania/gobase/genericstruct"
 
-const levels = 20
+const Steps = 20
 
+var NodeMaster = &genericstruct.NodeMaster{Factory:NodeConstructor}
 
-func encode(b []byte,n []int64) {
-	for _,num := range n {
-		binary.BigEndian.PutUint64(b,uint64(num))
-		b = b[8:]
-	}
-}
-func decode(b []byte,n []int64) {
-	for i := range n {
-		n[i] = int64(binary.BigEndian.Uint64(b))
-		b = b[8:]
-	}
+type NodeHead struct{
+	Nexts   [Steps]int64
+	Content int64
+	Rest    int32
 }
 
-type shared struct{
-	dman dataman.DataManager
-	cache map[int64]*node
+type Node struct{
+	Head    NodeHead
+	Key     []byte
+	Tainted bool
 }
+func NodeConstructor() genericstruct.Block { return new(Node) }
+func (n *Node) Load(buf *bytebufferpool.ByteBuffer) {
+	src := bytes.NewReader(buf.B)
+	binary.Read(src,binary.BigEndian,&(n.Head))
+	n.Key = make([]byte,int(n.Head.Rest))
+	src.Read(n.Key)
+	n.Tainted = false
+}
+func (n *Node) Store(buf *bytebufferpool.ByteBuffer) {
+	n.Head.Rest = int32(len(n.Key))
+	binary.Write(buf,binary.BigEndian,n.Head)
+	buf.Write(n.Key)
+	n.Tainted = false
+}
+func (n *Node) Dirty() bool { return n.Tainted }
 
-type node struct{
-	*shared
-	offset  int64
-	raw     [levels]int64
-	levels  [levels]*node
-	dirty   [levels]bool
-	
-	value   int64
-	key     []byte
+type KeySearcher struct{
+	Cache *genericstruct.NodeCache
+	Ptrs  [Steps]int64
 }
-func (s *shared) openNode(off int64) (*node,error) {
-	if h,ok := s.cache[off] ; ok { return h,nil }
-	
-	b := buffer.Get((levels*8)+8+4)
-	defer buffer.Put(b)
-	buf := *b
-	_,err := s.dman.RollbackFile().ReadAt(buf[:(levels*8)+8+4],off)
-	if err!=nil { return nil,err }
-	
-	n := new(node)
-	n.offset = off
-	decode(buf,n.raw[:])
-	n.shared = s
-	n.value = int64(binary.BigEndian.Uint64(buf[(levels*8):]))
-	kl := int32(binary.BigEndian.Uint32(buf[(levels*8)+8:]))
-	n.key = make([]byte,kl)
-	n.dman.RollbackFile().ReadAt(n.key,off + ((levels*8)+8+4))
-	
-	s.cache[off] = n
-	
-	return n,nil
-}
-
-func (n *node) loadPointers() {
-	
-}
-func (n *node) persistPointers() error {
-	b := buffer.Get((levels*8))
-	defer buffer.Put(b)
-	for i,l := range n.levels {
-		if l!=nil && n.raw[i]==0 {
-			n.raw[i] = l.offset
-		} else if l==nil { n.raw[i] = 0 }
-	}
-	encode(*b,n.raw[:])
-	E := levels
-	B := 0
+func (k *KeySearcher) Steps(off int64, key []byte) error {
+	b,err := k.Cache.Get(off)
+	if err!=nil { return err }
+	node := b.(*Node)
+	i := Steps-1
+	k.Ptrs[i] = off
 	for {
-		if n.dirty[E-1] { break }
-		E--
-		if E==0 { break }
-	}
-	for B<E {
-		if n.dirty[B] { break }
-		B++
-	}
-	if B>=E { return nil }
-	for i := range n.dirty { n.dirty[i] = false }
-	buf := (*b)[:E*8][B*8:]
-	_,err := n.dman.RollbackFile().WriteAt(buf,n.offset+int64(B*8))
-	return err
-}
-func (n *node) setNode(i int, m *node) {
-	n.dirty[i] = n.levels[i]!=m 
-	n.levels[i] = m
-}
-func (n *node) length() int {
-	return (levels*8)+8+4+len(n.key)
-}
-func (n *node) persist() error {
-	lng := n.length()
-	if n.offset==0 {
-		off,err := n.dman.Alloc(int64(lng))
+		next := node.Head.Nexts[i]
+		
+		// While next node is NULL, do:
+		for next==0 && 0<i {
+			// Try again with lower Level
+			k.Ptrs[i-1] = k.Ptrs[i]
+			i--
+			next = node.Head.Nexts[i]
+		}
+		if next==0 { break }
+		
+		nb,err := k.Cache.Get(next)
 		if err!=nil { return err }
-		n.offset = off
+		nnode := nb.(*Node)
+		num := bytes.Compare(nnode.Key,key)
+		
+		// if nnode.Key < key, then:
+		if num<0 {
+			// Skip to next element.
+			k.Ptrs[i] = next
+			node = nnode
+			continue
+		}
+		
+		// if key < nnode.Key, then:
+		if 0<num && 0<i {
+			// Try again with lower Level
+			k.Ptrs[i-1] = k.Ptrs[i]
+			i--
+			continue
+		}
+		
+		// nnode.Key == key or i == 0
+		break
 	}
 	
-	b := buffer.Get(lng-(levels*8))
-	defer buffer.Put(b)
-	buf := (*b)[:lng-(levels*8)]
-	binary.BigEndian.PutUint64(buf,uint64(n.value))
-	binary.BigEndian.PutUint64(buf[8:],uint64(len(n.key)))
-	copy(buf[8+4:],n.key)
-	_,err := n.dman.RollbackFile().WriteAt(buf,n.offset+int64((levels*8)))
-	return err
+	// Fill the all the Levels.
+	for 0<i {
+		k.Ptrs[i-1] = k.Ptrs[i]
+		i--
+	}
+	return nil
 }
 
