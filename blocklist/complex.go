@@ -1,0 +1,179 @@
+/*
+Copyright (c) 2017 Simon Schmidt
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+
+package blocklist
+
+import "github.com/maxymania/gobase/dataman"
+import "encoding/binary"
+import "sync"
+import "io"
+
+type Int64 [8]byte
+func (b *Int64) Int64() int64 { return int64(binary.BigEndian.Uint64(b[:])) }
+func (b *Int64) SetInt64(i int64) { binary.BigEndian.PutUint64(b[:],uint64(i)) }
+
+type Int32 [4]byte
+func (b *Int32) Int32() int32 { return int32(binary.BigEndian.Uint32(b[:])) }
+func (b *Int32) SetInt32(i int32) { binary.BigEndian.PutUint32(b[:],uint32(i)) }
+func (b *Int32) Int() int { return int(binary.BigEndian.Uint32(b[:])) }
+func (b *Int32) SetInt(i int) { binary.BigEndian.PutUint32(b[:],uint32(i)) }
+
+
+type IntP []byte
+func (b IntP) Int64() int64 { return int64(binary.BigEndian.Uint64(b)) }
+func (b IntP) SetInt64(i int64) { binary.BigEndian.PutUint64(b,uint64(i)) }
+func (b IntP) Int32() int32 { return int32(binary.BigEndian.Uint32(b)) }
+func (b IntP) SetInt32(i int32) { binary.BigEndian.PutUint32(b,uint32(i)) }
+func (b IntP) Int() int { return int(binary.BigEndian.Uint32(b)) }
+func (b IntP) SetInt(i int) { binary.BigEndian.PutUint32(b,uint32(i)) }
+
+type BufAddr struct{
+	Off int64
+	Len int
+}
+
+var sizes = [...]int{
+	0x80000-16,
+	0x40000-16,
+	0x20000-16,
+	0x10000-16,
+}
+const (
+	o_next = 0
+	o_first
+	o_cap = 8
+	o_last
+	o_len = 12
+)
+// [ First:8 | Last:8 ]
+
+// [ Next:8 | Cap:4 | Len:4 ]
+
+
+func Allocate(DM dataman.DataManager,n int) (baa []BufAddr,err error) {
+	var off,lng int64
+	for _,size := range sizes {
+		for size<n {
+			off,err = DM.Alloc(int64(size)+16)
+			if err!=nil { return }
+			lng,err = DM.UsableSize(off)
+			if err!=nil { return }
+			baa = append(baa,BufAddr{off,int(lng-16)})
+			n-=int(lng-16)
+		}
+	}
+	{
+		off,err = DM.Alloc(int64(n)+16)
+		if err!=nil { return }
+		lng,err = DM.UsableSize(off)
+		if err!=nil { return }
+		baa = append(baa,BufAddr{off,int(lng)})
+	}
+	return
+}
+
+func Chainify(DM dataman.DataManager,baa []BufAddr,off int64) (err error) {
+	var head,elem [16]byte
+	fl := DM.RollbackFile()
+	
+	_,err = fl.ReadAt(head[:],off)
+	if err!=nil { return }
+	
+	hasNoTail := IntP(head[8:]).Int64()==0
+	
+	copy(elem[:8],head[:8])
+	IntP(elem[12:]).SetInt32(0)
+	
+	i := len(baa)
+	for 0<i {
+		i--
+		IntP(elem[8:]).SetInt(baa[i].Len)
+		_,err = fl.WriteAt(elem[:],baa[i].Off)
+		if err!=nil { return }
+		IntP(elem[:]).SetInt64(baa[i].Off)
+	}
+	
+	if hasNoTail {
+		IntP(head[8:]).SetInt64(baa[len(baa)-1].Off)
+	}
+	copy(head[:8],elem[:8])
+	_,err = fl.WriteAt(head[:],off)
+	
+	return
+}
+
+// Adds off2 to off1. off2 should be cleared, as it is not done automatically.
+func AddElementsAndFree(DM dataman.DataManager, off1, off2 int64) (err error) {
+	var head1,head2 [16]byte
+	fl := DM.RollbackFile()
+	
+	_,err = fl.ReadAt(head1[:],off1) ; if err!=nil { return }
+	
+	_,err = fl.ReadAt(head2[:],off2) ; if err!=nil { return }
+	
+	if IntP(head2[8:]).Int64()==0 { return }
+	if IntP(head1[8:]).Int64()==0 { // Copy off2 to off1.
+		_,err = fl.ReadAt(head2[:],off1)
+		return
+	}
+	
+	// off1->Tail->Next = off2->Head
+	_,err = fl.WriteAt(head2[:8],IntP(head1[8:]).Int64()) ; if err!=nil { return }
+	
+	// off1->Tail = off2->Tail
+	copy(head1[8:],head2[8:])
+	_,err = fl.WriteAt(head1[8:],8+off1) //; if err!=nil { return }
+	
+	return
+}
+
+func IterateOverList(r io.ReaderAt, head int64, max int) (nhd int64,i []int64,err error) {
+	var i64 Int64
+	
+	// Get head->Head
+	_,err = r.ReadAt(i64[:],head) ; if err!=nil { return }
+	nhd = i64.Int64()
+	
+	i = make([]int64,0,max)
+	for ; max>0 ; max--{
+		i = append(i,nhd)
+		
+		// nhd = nhd->Next
+		_,err = r.ReadAt(i64[:],nhd) ; if err!=nil { return }
+		nhd = i64.Int64()
+	}
+	
+	return
+}
+
+
+
+
+type BLManager struct{
+	DM dataman.DataManager
+	WL sync.Mutex
+	wg sync.WaitGroup
+}
+
+
+
