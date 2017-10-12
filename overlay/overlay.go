@@ -183,6 +183,18 @@ func (o *Overlay) GetCurrentSize() (n int64) {
 	}
 	return
 }
+func (o *Overlay) GetSizeRange() (min int64,max int64) {
+	min = 0
+	max = -1
+	if o.truncate { max = o.fileSize }
+	elem := o.sl.Max()
+	if elem!=nil {
+		end := elem.(*item).end()
+		if end>min { min = end }
+	}
+	if max>=0 && min>max { max = min }
+	return
+}
 func (o *Overlay) DumpJournal(target io.Writer) (err error) {
 	enc := msgpack.NewEncoder(target)
 	err = enc.Encode(o.truncate,o.fileSize)

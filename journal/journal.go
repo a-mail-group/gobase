@@ -74,10 +74,11 @@ func OpenJournalFile(f file.File,w WAL_Target) (*JournalFile,error) {
 	return j,nil
 }
 
-func (j *JournalFile) ReadAt(p []byte, off int64) (n int, err error) {
+// Old cruft.
+func (j *JournalFile) old_ReadAt(p []byte, off int64) (n int, err error) {
 	cursize := j.overlay.GetCurrentSize()
 	max := off-cursize
-	if cursize<0 { max = int64(len(p)) }
+	if cursize<0 || max<0 { max = int64(len(p)) }
 	if off<0 { return 0,io.EOF }
 	isEOF := int64(len(p))>max
 	if isEOF { p = p[:int(max)] }
@@ -86,6 +87,36 @@ func (j *JournalFile) ReadAt(p []byte, off int64) (n int, err error) {
 		bzero(p[n:])
 		n = len(p)
 		if err==io.EOF { err = nil }
+	}
+	j.overlay.ReadOverAt(p,off)
+	if isEOF && err==nil { err = io.EOF }
+	return
+}
+
+
+func (j *JournalFile) ReadAt(p []byte, off int64) (n int, err error) {
+	minsz,maxsz := j.overlay.GetSizeRange()
+	isEOF := false
+	
+	if maxsz>=0 {
+		if maxsz<=off { return 0,io.EOF }
+		cut := maxsz-off
+		isEOF = cut>int64(len(p))
+		if isEOF { p = p[:int(cut)] }
+	}
+	
+	n,err = j.File.ReadAt(p,off)
+	if n<len(p) && off<minsz {
+		cut := minsz-off
+		if int64(n)<cut {
+			if cut<int64(len(p)) {
+				bzero(p[n:int(cut)])
+			} else {
+				bzero(p[n:])
+				n = len(p)
+				if err==io.EOF { err = nil }
+			}
+		}
 	}
 	j.overlay.ReadOverAt(p,off)
 	if isEOF && err==nil { err = io.EOF }
