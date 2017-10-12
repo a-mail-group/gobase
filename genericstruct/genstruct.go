@@ -77,7 +77,7 @@ func (c *NodeCache) evict(key interface{}, value interface{}) {
 	size,err := c.dman.UsableSize(off)
 	if err!=nil { return } // Error.
 	
-	if int64(len(buf.B))<size { return } // Error.
+	if int64(len(buf.B))>size { return } // Error.
 	
 	c.dman.RollbackFile().WriteAt(buf.B,off)
 }
@@ -87,6 +87,10 @@ func (c *NodeCache) file() file.File {
 	} else {
 		return c.dman.RollbackFile()
 	}
+}
+func (c *NodeCache) Delete(off int64) error {
+	c.cache.Remove(off)
+	return c.dman.Free(off)
 }
 func (c *NodeCache) Get(off int64) (Block,error) {
 	b,ok := c.cache.Get(off)
@@ -120,7 +124,7 @@ func (c *NodeCache) Set(b Block) (int64,error) {
 	_,err = c.file().WriteAt(buf.B,off)
 	return off,err
 }
-func (c *NodeCache) Close() error {
+func (c *NodeCache) Flush() error {
 	c.cache.Purge()
 	return nil
 }
