@@ -33,11 +33,7 @@ const Steps = 20
 
 var NodeMaster = &genericstruct.NodeMaster{Factory:NodeConstructor}
 
-//var EWrongSeek = errors.New("EWrongSeek")
 var EExists = errors.New("EExists")
-
-var EDisabled = errors.New("EDisabled")
-
 
 type NodeHead struct{
 	Nexts   [Steps]int64
@@ -245,7 +241,6 @@ func (k *KeySearcher) Insert(key []byte, value int64, level int) (int64,error) {
 	if level<0 || level>=Steps { panic("level out of range") }
 	noff,err := k.Cache.Set(&Node{Key:key,Head:NodeHead{Content:value}})
 	if err!=nil { return 0,err }
-	//if noff==0 { return 0,EDisabled } // Won't happen!!!
 	
 	rn,err := k.Cache.Get(noff)
 	if err!=nil { return 0,err }
