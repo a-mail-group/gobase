@@ -25,7 +25,6 @@ package blocklist
 
 import "github.com/maxymania/gobase/dataman"
 import "encoding/binary"
-import "sync"
 import "io"
 
 type Int64 [8]byte
@@ -156,6 +155,7 @@ func IterateOverList(r io.ReaderAt, head int64, max int) (nhd int64,i []int64,er
 	
 	i = make([]int64,0,max)
 	for ; max>0 ; max--{
+		if nhd==0 { break }
 		i = append(i,nhd)
 		
 		// nhd = nhd->Next
@@ -166,14 +166,18 @@ func IterateOverList(r io.ReaderAt, head int64, max int) (nhd int64,i []int64,er
 	return
 }
 
-
-
-
-type BLManager struct{
-	DM dataman.DataManager
-	WL sync.Mutex
-	wg sync.WaitGroup
+func SetHead(w io.WriterAt, off int64, newHead int64) (err error) {
+	var buf [16]byte
+	for i := range buf { buf[i] = 0 }
+	
+	if newHead==0 {
+		// off->Head = 0 ; off->Tail = 0
+		_,err = w.WriteAt(buf[:],off)
+	} else {
+		// off->Head = newHead
+		IntP(buf[:]).SetInt64(newHead)
+		_,err = w.WriteAt(buf[:8],off)
+	}
+	return
 }
-
-
 

@@ -24,6 +24,7 @@ SOFTWARE.
 package dataman
 
 import "github.com/cznic/file"
+import "sync"
 
 type DataManager interface{
 	Close() error
@@ -34,6 +35,11 @@ type DataManager interface{
 	Free(off int64) error
 	UsableSize(off int64) (int64, error)
 	Commit() error
+}
+
+type DataManagerLocked struct{
+	DataManager
+	sync.Mutex
 }
 
 type SimpleDataManager struct{
