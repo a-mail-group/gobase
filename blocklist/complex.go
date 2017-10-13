@@ -26,6 +26,7 @@ package blocklist
 import "github.com/maxymania/gobase/dataman"
 import "encoding/binary"
 import "io"
+import "errors"
 
 type Int64 [8]byte
 func (b *Int64) Int64() int64 { return int64(binary.BigEndian.Uint64(b[:])) }
@@ -45,6 +46,8 @@ func (b IntP) Int32() int32 { return int32(binary.BigEndian.Uint32(b)) }
 func (b IntP) SetInt32(i int32) { binary.BigEndian.PutUint32(b,uint32(i)) }
 func (b IntP) Int() int { return int(binary.BigEndian.Uint32(b)) }
 func (b IntP) SetInt(i int) { binary.BigEndian.PutUint32(b,uint32(i)) }
+
+var EIllegalPosition = errors.New("Illegal Position (0)")
 
 type BufAddr struct{
 	Off int64
@@ -104,6 +107,7 @@ func Allocate(DM dataman.DataManager,n int) (baa []BufAddr,err error) {
 }
 
 func Chainify(DM dataman.DataManager,baa []BufAddr,off int64) (err error) {
+	if off==0 { return EIllegalPosition }
 	var head,elem [16]byte
 	fl := DM.RollbackFile()
 	
@@ -135,6 +139,8 @@ func Chainify(DM dataman.DataManager,baa []BufAddr,off int64) (err error) {
 
 // Adds off2 to off1. off2 should be cleared, as it is not done automatically.
 func AddElementsAndFree(DM dataman.DataManager, off1, off2 int64) (err error) {
+	if off1==0 { return EIllegalPosition }
+	if off2==0 { return EIllegalPosition }
 	var head1,head2 [16]byte
 	fl := DM.RollbackFile()
 	
@@ -159,6 +165,7 @@ func AddElementsAndFree(DM dataman.DataManager, off1, off2 int64) (err error) {
 }
 
 func IterateOverList(r io.ReaderAt, head int64, max int) (nhd int64,i []int64,err error) {
+	if head==0 { return 0,nil,EIllegalPosition }
 	var i64 Int64
 	
 	// Get head->Head
@@ -178,6 +185,7 @@ func IterateOverList(r io.ReaderAt, head int64, max int) (nhd int64,i []int64,er
 	return
 }
 func IterateOverListEx(r io.ReaderAt, head int64, max int) (nhd int64,i []BufAddr,err error) {
+	if head==0 { return 0,nil,EIllegalPosition }
 	var i32 Int32
 	var i64 Int64
 	
@@ -203,6 +211,7 @@ func IterateOverListEx(r io.ReaderAt, head int64, max int) (nhd int64,i []BufAdd
 
 
 func SetHead(w io.WriterAt, off int64, newHead int64) (err error) {
+	if off==0 { return EIllegalPosition }
 	var buf [16]byte
 	for i := range buf { buf[i] = 0 }
 	
@@ -219,6 +228,7 @@ func SetHead(w io.WriterAt, off int64, newHead int64) (err error) {
 
 // Sets the length field where the LSB is used for the lastInChain boolean
 func SetExtendedLen(w io.WriterAt, off int64, lng int, lastInChain bool) error {
+	if off==0 { return EIllegalPosition }
 	var i32 Int32
 	lng<<=1
 	if lastInChain { lng |=1 }
@@ -228,6 +238,7 @@ func SetExtendedLen(w io.WriterAt, off int64, lng int, lastInChain bool) error {
 }
 
 func GetExtendedLen(r io.ReaderAt, off int64) (lng int, lastInChain bool, err error) {
+	if off==0 { return 0,false,EIllegalPosition }
 	var i32 Int32
 	
 	_,err = r.ReadAt(i32[:],off+o_len)
@@ -238,6 +249,7 @@ func GetExtendedLen(r io.ReaderAt, off int64) (lng int, lastInChain bool, err er
 }
 
 func GetNext(r io.ReaderAt, off int64) (nxt int64,err error) {
+	if off==0 { return 0,EIllegalPosition }
 	var i64 Int64
 	
 	_,err = r.ReadAt(i64[:],off)
