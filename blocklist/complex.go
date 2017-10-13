@@ -68,6 +68,18 @@ const (
 
 // [ Next:8 | Cap:4 | Len:4 ]
 
+// Allocate and Clear List-Head
+func NewListHead(DM dataman.DataManager) (int64,error) {
+	off,err := DM.Alloc(16)
+	if err!=nil { return 0,err }
+	
+	_,err = DM.RollbackFile().WriteAt(make([]byte,16),off)
+	
+	if err!=nil { return 0,err }
+	
+	return off,nil
+}
+
 
 func Allocate(DM dataman.DataManager,n int) (baa []BufAddr,err error) {
 	var off,lng int64
@@ -165,6 +177,30 @@ func IterateOverList(r io.ReaderAt, head int64, max int) (nhd int64,i []int64,er
 	
 	return
 }
+func IterateOverListEx(r io.ReaderAt, head int64, max int) (nhd int64,i []BufAddr,err error) {
+	var i32 Int32
+	var i64 Int64
+	
+	// Get head->Head
+	_,err = r.ReadAt(i64[:],head) ; if err!=nil { return }
+	nhd = i64.Int64()
+	
+	i = make([]BufAddr,0,max)
+	for ; max>0 ; max--{
+		if nhd==0 { break }
+		
+		_,err = r.ReadAt(i64[:],nhd) ; if err!=nil { return }
+		_,err = r.ReadAt(i32[:],nhd+o_cap) ; if err!=nil { return }
+		
+		i = append(i,BufAddr{nhd,i32.Int()})
+		
+		// nhd = nhd->Next
+		nhd = i64.Int64()
+	}
+	
+	return
+}
+
 
 func SetHead(w io.WriterAt, off int64, newHead int64) (err error) {
 	var buf [16]byte
@@ -180,4 +216,34 @@ func SetHead(w io.WriterAt, off int64, newHead int64) (err error) {
 	}
 	return
 }
+
+// Sets the length field where the LSB is used for the lastInChain boolean
+func SetExtendedLen(w io.WriterAt, off int64, lng int, lastInChain bool) error {
+	var i32 Int32
+	lng<<=1
+	if lastInChain { lng |=1 }
+	i32.SetInt(lng)
+	_,err := w.WriteAt(i32[:],off+o_len)
+	return err
+}
+
+func GetExtendedLen(r io.ReaderAt, off int64) (lng int, lastInChain bool, err error) {
+	var i32 Int32
+	
+	_,err = r.ReadAt(i32[:],off+o_len)
+	lng = i32.Int()
+	lastInChain = (lng&1)==1
+	lng>>=1
+	return
+}
+
+func GetNext(r io.ReaderAt, off int64) (nxt int64,err error) {
+	var i64 Int64
+	
+	_,err = r.ReadAt(i64[:],off)
+	nxt = i64.Int64()
+	
+	return
+}
+
 

@@ -33,22 +33,22 @@ type BLManager struct{
 	Off   int64
 	mutex sync.Mutex
 }
-func (b *BLManager) AppendNodeAndConsume(obtain func(dm dataman.DataManager)(int64,error) ) error {
+func (b *BLManager) AppendNodeAndConsume(obtain func(dm dataman.DataManager)(int64,error) ) (bool,error) {
 	b.mutex.Lock(); defer b.mutex.Unlock()
 	b.DM.Lock(); defer b.DM.Unlock()
 	
 	off,e := obtain(b.DM)
-	if e!=nil || off==0 { return e }
+	if e!=nil || off==0 { return false,e }
 	
 	e = AddElementsAndFree(b.DM,b.Off,off)
 	
-	if e!=nil { return e }
+	if e!=nil { return false,e }
 	
 	e = b.DM.Free(off)
 	
-	if e!=nil { return e }
+	if e!=nil { return false,e }
 	
-	return b.DM.Commit()
+	return true,b.DM.Commit()
 }
 func (b *BLManager) AppendNodeAndClear(other int64) error {
 	b.mutex.Lock(); defer b.mutex.Unlock()
@@ -83,6 +83,31 @@ func (b *BLManager) FreeElements(maxElems int) error {
 	
 	return b.DM.Commit()
 }
-
-
+func (b *BLManager) FreeElementsEx(maxElems int, updFreed func(dataman.DataManager,int64) error ) error {
+	// Read-Phase
+	b.mutex.Lock(); defer b.mutex.Unlock()
+	
+	nhd,elems,err := IterateOverListEx(b.DM.DirectFile(),b.Off,maxElems)
+	if err!=nil { return err }
+	
+	if len(elems)==0 { return nil }
+	
+	// Write Phase
+	b.DM.Lock(); defer b.DM.Unlock()
+	
+	err = SetHead(b.DM.RollbackFile(),b.Off,nhd)
+	if err!=nil { return err }
+	
+	freed := int64(0)
+	for _,elem := range elems {
+		err = b.DM.Free(elem.Off)
+		if err!=nil { return err }
+		freed+=int64(elem.Len+16)
+	}
+	
+	err = updFreed(b.DM,freed)
+	if err!=nil { return err }
+	
+	return b.DM.Commit()
+}
 

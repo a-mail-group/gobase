@@ -62,7 +62,7 @@ func OpenJournalFile(f file.File,w WAL_Target) (*JournalFile,error) {
 	j.overlay = overlay.NewOverlay()
 	
 	// Recover Journal if needed.
-	p,err := w.Seek(0,0)
+	p,err := w.Seek(0,2)
 	if err!=nil && err!=io.EOF { return nil,err }
 	if p>0 {
 		err := j.overlay.LoadJournal(w)

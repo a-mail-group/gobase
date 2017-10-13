@@ -24,7 +24,7 @@ SOFTWARE.
 package skiplist
 
 import "github.com/maxymania/gobase/genericstruct"
-
+import "bytes"
 
 
 func LookupNode(nc *genericstruct.NodeCache,off int64,key []byte) (*Node,bool,error) {
@@ -63,3 +63,34 @@ func Delete(nc *genericstruct.NodeCache,off int64,key []byte) (bool,error) {
 	nc.Flush() // Flush the cache.
 	return true,nc.Delete(ref)
 }
+
+/*
+Removes the first Element of the skiplist, if it is lower or equal to KEY.
+
+On success, it returns the Value, that is assigned to the first element.
+On failure (first element is greater than KEY, or list is empty), it does not modify anything.
+*/
+func ConsumeFirstIfLowerOrEqual(nc *genericstruct.NodeCache,off int64,key []byte) (int64,bool,error) {
+	b,err := nc.Get(off)
+	if err!=nil { return 0,false,err }
+	root := b.(*Node)
+	ref := root.Head.Nexts[0]
+	if ref==0 { return 0,false,nil } // No first node (list empty)
+	b,err = nc.Get(ref)
+	if err!=nil { return 0,false,err }
+	first := b.(*Node)
+	if bytes.Compare(first.Key,key)>0 { return 0,false,nil } // first element is greater than KEY
+	
+	value := first.Head.Content
+	
+	for i:=0 ; i<Steps ; i++ {
+		if root.Head.Nexts[i]==ref { root.Head.Nexts[i] = first.Head.Nexts[i] }
+	}
+	root.Tainted = true
+	
+	nc.Flush() // Flush the cache.
+	
+	return value,false,nc.Delete(ref)
+}
+
+
