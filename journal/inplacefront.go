@@ -41,8 +41,14 @@ type InplaceWAL_File struct{
 	max int64   // Write-Limit
 	pos int64   // Position
 	limit int64 // Read-Limit
+	holdSize bool
+}
+func (i *InplaceWAL_File) SetHoldSize(on bool) error {
+	i.holdSize = on
+	return i.persistLimit()
 }
 func (i *InplaceWAL_File) persistLimit() error {
+	if i.holdSize { return nil }
 	binary.BigEndian.PutUint64(i.buf[:],uint64(i.limit))
 	_,err := i.w.WriteAt(i.buf[:],0)
 	return err

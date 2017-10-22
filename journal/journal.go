@@ -43,6 +43,11 @@ type WAL_Target interface{
 	Truncate(int64) error
 }
 
+type WAL_Target_Ex interface{
+	WAL_Target
+	SetHoldSize(on bool) error
+}
+
 type fileInfo struct{
 	os.FileInfo
 	size int64
@@ -137,9 +142,20 @@ func (j *JournalFile) Stat() (os.FileInfo, error) {
 	return f,e
 }
 func (j *JournalFile) Commit(rws WAL_Target) error {
+	rwsx,isRwsx := rws.(WAL_Target_Ex)
 	rws.Seek(0,0)
+	rws.Truncate(0)
+	if isRwsx {
+		rwsx.SetHoldSize(true) // Write the entire WAL atomically!
+	}
 	err := j.overlay.DumpJournal(rws) // Dump Changes into Write-Ahead Log.
 	if err!=nil { return err }
+	if isRwsx {
+		err = rwsx.SetHoldSize(false) // Commit the WAL to disk.
+		if err!=nil { return err }
+	}
+	
+	// Seek back, and then apply the WAL it.
 	rws.Seek(0,0)
 	err = j.overlay.ApplyTo(j.File) // Apply Changes
 	if err!=nil { return &ECommitError{err} }
